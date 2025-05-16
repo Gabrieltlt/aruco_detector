@@ -8,7 +8,6 @@ from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 
 def generate_launch_description():
-    # Argumentos (opcional, para habilitar/desabilitar RViz)
     declared_arguments = [
         DeclareLaunchArgument(
             "use_rviz",
@@ -18,7 +17,7 @@ def generate_launch_description():
     ]
     use_rviz = LaunchConfiguration("use_rviz")
 
-    # 1. Launch da câmera USB (usb_cam)
+    # 1. Launch da câmera USB
     launch_camera = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -28,7 +27,7 @@ def generate_launch_description():
         )
     )
 
-    # 2. Nó do aruco_detector (ajuste o nome do executável se necessário)
+    # 2. Nó do aruco_detector
     aruco_node = Node(
         package='aruco_detector',
         executable='aruco_detector.py',  # Verifique com `ros2 pkg executables aruco_detector`
@@ -41,7 +40,7 @@ def generate_launch_description():
         }]
     )
 
-    # 3. RViz (opcional, para visualização)
+    # 3. RViz
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -55,6 +54,6 @@ def generate_launch_description():
         declared_arguments + [
             launch_camera,
             aruco_node,
-            rviz_node  # Remova se não for usar RViz
+            rviz_node
         ]
     )
