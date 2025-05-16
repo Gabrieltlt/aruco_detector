@@ -9,13 +9,21 @@
 
   <buildtool_depend>ament_python</buildtool_depend>
 
+  <!-- Dependências principais -->
   <depend>rclpy</depend>
   <depend>cv_bridge</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>tf2_ros</depend>
+  <depend>opencv</depend> <!-- Adicionei explicitamente -->
+  <depend>aruco_opencv</depend> <!-- Se estiver usando a biblioteca aruco do OpenCV -->
+  
+  <!-- Dependências para launch files -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
+  <!-- Testes -->
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>
