@@ -17,3 +17,13 @@ cd ~/main_ws
 rosdep install -i --from-path src --rosdistro humble -y
 colcon build
 ```
+
+## Usage
+To start aruco detection without RViz, run:
+```bash
+ros2 launch aruco_detector detection.launch.py
+```
+To start aruco detection with RViz, run:
+```bash
+ros2 launch aruco_detector detection.launch.py use_rviz:=true
+```
