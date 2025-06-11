@@ -12,7 +12,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "use_rviz",
             default_value="false",
-            description="Start RViz2 automatically with this launch file.",
+            description="Start RViz as a parameter with this initialization file.",
         )
     ]
     use_rviz = LaunchConfiguration("use_rviz")

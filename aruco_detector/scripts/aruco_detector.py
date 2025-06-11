@@ -7,7 +7,7 @@ from geometry_msgs.msg import PoseArray, Pose, TransformStamped
 from visualization_msgs.msg import MarkerArray, Marker
 from cv_bridge import CvBridge
 import cv2
-import cv2.aruco as aruco
+import cv2.aruco as aruco #type: ignore
 import numpy as np
 from tf2_ros import TransformBroadcaster
 
@@ -20,8 +20,10 @@ class ArucoDetector(Node):
         self.declare_parameter('dictionary', 'DICT_5X5_250')
         self.declare_parameter('camera_frame', 'camera_link')
         self.declare_parameter('marker_frame_prefix', 'aruco_')
+        self.declare_parameter('position_threshold', 0.02)  # 2cm - CONFIGURAÇÃO DO FILTRO
+        self.declare_parameter('angle_threshold', 0.15)  # ~8.6 graus - CONFIGURAÇÃO DO FILTRO
         
-        # Parâmetros da câmera (ajuste para sua câmera)
+        # Parâmetros da câmera
         self.declare_parameter('camera_matrix', [1000.0, 0.0, 320.0, 
                                                0.0, 1000.0, 240.0, 
                                                0.0, 0.0, 1.0])
@@ -31,6 +33,8 @@ class ArucoDetector(Node):
         self.marker_length = self.get_parameter('marker_length').value
         self.camera_frame = self.get_parameter('camera_frame').value
         self.marker_frame_prefix = self.get_parameter('marker_frame_prefix').value
+        self.pos_threshold = self.get_parameter('position_threshold').value
+        self.ang_threshold = self.get_parameter('angle_threshold').value
         
         # Configurar ArUco
         self.setup_aruco()
@@ -49,6 +53,9 @@ class ArucoDetector(Node):
         # TF Broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
         
+        # Armazenar últimas poses válidas
+        self.last_valid_poses = {}
+        
         # Subscriber para imagens da câmera
         self.image_sub = self.create_subscription(
             Image,
@@ -61,7 +68,7 @@ class ArucoDetector(Node):
         self.poses_pub = self.create_publisher(PoseArray, 'aruco/poses', 10)
         self.markers_pub = self.create_publisher(MarkerArray, 'aruco/markers', 10)
         
-        self.get_logger().info("Aruco Detector inicializado - Publicando imagens continuamente")
+        self.get_logger().info("Aruco Detector inicializado com filtro de faixa e eixos visíveis")
 
     def setup_aruco(self):
         """Configurar dicionário ArUco"""
@@ -84,7 +91,6 @@ class ArucoDetector(Node):
     def image_callback(self, msg):
         """Callback para processar cada frame recebido"""
         try:
-            # Converter mensagem ROS para imagem OpenCV
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
             self.get_logger().error(f'Erro ao converter imagem: {str(e)}')
@@ -96,18 +102,158 @@ class ArucoDetector(Node):
         # Processar frame para detecção de ArUco
         markers_detected = self.process_frame(processed_frame)
         
-        # Publicar imagem processada (com ou sem marcadores)
+        # Publicar imagem processada (com eixos visíveis)
         self.publish_detection(processed_frame, msg.header)
         
-        # Se marcadores foram detectados, publicar informações adicionais
         if markers_detected:
             corners, ids, rvecs, tvecs = markers_detected
-            self.publish_poses(ids, rvecs, tvecs, msg.header)
-            self.publish_markers(ids, tvecs, msg.header)
-            self.publish_transforms(ids, rvecs, tvecs, msg.header)
+            self.handle_detected_markers(ids, rvecs, tvecs, msg.header)
+
+    def handle_detected_markers(self, ids, rvecs, tvecs, header):
+        """Processar marcadores detectados com filtro de faixa"""
+        pose_array = PoseArray()
+        pose_array.header = header
+        pose_array.header.frame_id = self.camera_frame
+        
+        marker_array = MarkerArray()
+        
+        for i in range(len(ids)):
+            marker_id = int(ids[i][0])
+            current_pos = tvecs[i][0]
+            current_rot = rvecs[i][0]
+            
+            # Verificar se devemos atualizar a pose
+            if self.should_update_pose(marker_id, current_pos, current_rot):
+                self.last_valid_poses[marker_id] = {
+                    'position': current_pos,
+                    'rotation': current_rot
+                }
+            
+            # Se temos uma pose válida para este marcador
+            if marker_id in self.last_valid_poses:
+                # Adicionar à PoseArray
+                pose = self.create_pose(marker_id)
+                pose_array.poses.append(pose)
+                
+                # Adicionar ao MarkerArray
+                marker = self.create_marker(marker_id, header)
+                marker_array.markers.append(marker)
+        
+        # Publicar todas as mensagens
+        self.poses_pub.publish(pose_array)
+        self.markers_pub.publish(marker_array)
+        
+        # Publicar transformadas TF
+        self.publish_transforms(header)
+
+    def should_update_pose(self, marker_id, current_pos, current_rot):
+        """Determinar se a pose deve ser atualizada baseado nos limiares"""
+        if marker_id not in self.last_valid_poses:
+            return True  # Primeira detecção deste marcador
+            
+        last_pos = self.last_valid_poses[marker_id]['position']
+        last_rot = self.last_valid_poses[marker_id]['rotation']
+        
+        # Calcular diferenças
+        pos_diff = np.linalg.norm(current_pos - last_pos)
+        rot_diff = np.linalg.norm(current_rot - last_rot)
+        
+        # Atualizar apenas se exceder algum limiar
+        return (pos_diff > self.pos_threshold) or (rot_diff > self.ang_threshold)
+
+    def create_pose(self, marker_id):
+        """Criar mensagem Pose a partir da última pose válida"""
+        last_pose = self.last_valid_poses[marker_id]
+        pose = Pose()
+        
+        # Posição
+        pose.position.x = float(last_pose['position'][0])
+        pose.position.y = float(last_pose['position'][1])
+        pose.position.z = float(last_pose['position'][2])
+        
+        # Orientação (convertida para quaternion)
+        rot_mat = cv2.Rodrigues(last_pose['rotation'])[0]
+        q = self.rotation_matrix_to_quaternion(rot_mat)
+        
+        pose.orientation.x = q[0]
+        pose.orientation.y = q[1]
+        pose.orientation.z = q[2]
+        pose.orientation.w = q[3]
+        
+        return pose
+
+    def create_marker(self, marker_id, header):
+        """Criar marcador visual para RViz"""
+        last_pose = self.last_valid_poses[marker_id]
+        marker = Marker()
+        
+        marker.header = header
+        marker.header.frame_id = self.camera_frame
+        marker.ns = "aruco_markers"
+        marker.id = marker_id
+        marker.type = Marker.CUBE
+        marker.action = Marker.ADD
+        
+        # Posição
+        marker.pose.position.x = float(last_pose['position'][0])
+        marker.pose.position.y = float(last_pose['position'][1])
+        marker.pose.position.z = float(last_pose['position'][2])
+        
+        # Orientação
+        rot_mat = cv2.Rodrigues(last_pose['rotation'])[0]
+        q = self.rotation_matrix_to_quaternion(rot_mat)
+        
+        marker.pose.orientation.x = q[0]
+        marker.pose.orientation.y = q[1]
+        marker.pose.orientation.z = q[2]
+        marker.pose.orientation.w = q[3]
+        
+        # Tamanho
+        marker.scale.x = self.marker_length
+        marker.scale.y = self.marker_length
+        marker.scale.z = 0.01  # Marcador fino
+        
+        # Cor (verde semi-transparente)
+        marker.color.r = 0.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 0.7
+        
+        marker.lifetime.sec = 1  # Atualizar a cada segundo
+        
+        return marker
+
+    def publish_transforms(self, header):
+        """Publicar transformadas TF para todos os marcadores ativos"""
+        transforms = []
+        
+        for marker_id, pose_data in self.last_valid_poses.items():
+            t = TransformStamped()
+            t.header = header
+            t.header.frame_id = self.camera_frame
+            t.child_frame_id = f"{self.marker_frame_prefix}{marker_id}"
+            
+            # Posição
+            t.transform.translation.x = float(pose_data['position'][0])
+            t.transform.translation.y = float(pose_data['position'][1])
+            t.transform.translation.z = float(pose_data['position'][2])
+            
+            # Rotação (convertida para quaternion)
+            rot_mat = cv2.Rodrigues(pose_data['rotation'])[0]
+            q = self.rotation_matrix_to_quaternion(rot_mat)
+            
+            t.transform.rotation.x = q[0]
+            t.transform.rotation.y = q[1]
+            t.transform.rotation.z = q[2]
+            t.transform.rotation.w = q[3]
+            
+            transforms.append(t)
+        
+        if transforms:
+            self.tf_broadcaster.sendTransform(transforms)
 
     def process_frame(self, frame):
-        """Processar frame para detecção de ArUco e desenhar marcadores se encontrados"""
+        """Processar frame para detecção de ArUco"""
         # Converter para escala de cinza
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
@@ -122,128 +268,29 @@ class ArucoDetector(Node):
                 corners, self.marker_length, self.camera_matrix, self.dist_coeffs
             )
             
-            # Desenhar resultados no frame
-            self.draw_markers(frame, corners, ids, rvecs, tvecs)
+            # Desenhar os marcadores e eixos de pose
+            for i in range(len(ids)):
+                # Desenhar eixos de referência
+                cv2.drawFrameAxes(
+                    frame, self.camera_matrix, self.dist_coeffs,
+                    rvecs[i], tvecs[i], self.marker_length
+                )
+            
+            # Desenhar contornos dos marcadores
+            aruco.drawDetectedMarkers(frame, corners, ids)
             
             return corners, ids, rvecs, tvecs
         
         return None
 
-    def draw_markers(self, frame, corners, ids, rvecs, tvecs):
-        """Desenhar marcadores e eixos no frame"""
-        for i in range(len(ids)):
-            # Desenhar eixos de referência
-            cv2.drawFrameAxes(
-                frame, self.camera_matrix, self.dist_coeffs,
-                rvecs[i], tvecs[i], self.marker_length
-            )
-            
-            # Exibir coordenadas
-            x, y, z = tvecs[i][0]
-            cv2.putText(
-                frame, f"ID: {ids[i][0]} XYZ: [{x:.2f}, {y:.2f}, {z:.2f}]", 
-                (10, 30 + 30*i), cv2.FONT_HERSHEY_SIMPLEX, 
-                0.7, (0, 255, 0), 2
-            )
-        
-        # Desenhar contornos dos marcadores
-        aruco.drawDetectedMarkers(frame, corners, ids)
-
     def publish_detection(self, frame, header):
-        """Publicar imagem processada (com ou sem marcadores)"""
+        """Publicar imagem processada"""
         try:
             detection_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
             detection_msg.header = header
             self.detection_pub.publish(detection_msg)
         except Exception as e:
             self.get_logger().error(f'Erro ao publicar imagem: {str(e)}')
-
-    def publish_poses(self, ids, rvecs, tvecs, header):
-        """Publicar poses dos marcadores (apenas quando detectados)"""
-        pose_array = PoseArray()
-        pose_array.header = header
-        pose_array.header.frame_id = self.camera_frame
-        
-        for i in range(len(ids)):
-            pose = Pose()
-            pose.position.x = float(tvecs[i][0][0])
-            pose.position.y = float(tvecs[i][0][1])
-            pose.position.z = float(tvecs[i][0][2])
-            
-            # Converter rotação para quaternion
-            rot_mat = cv2.Rodrigues(rvecs[i])[0]
-            q = self.rotation_matrix_to_quaternion(rot_mat)
-            
-            pose.orientation.x = q[0]
-            pose.orientation.y = q[1]
-            pose.orientation.z = q[2]
-            pose.orientation.w = q[3]
-            
-            pose_array.poses.append(pose)
-        
-        self.poses_pub.publish(pose_array)
-
-    def publish_markers(self, ids, tvecs, header):
-        """Publicar marcadores visuais no RViz (apenas quando detectados)"""
-        marker_array = MarkerArray()
-        
-        for i in range(len(ids)):
-            marker = Marker()
-            marker.header = header
-            marker.header.frame_id = self.camera_frame
-            marker.ns = "aruco_markers"
-            marker.id = int(ids[i][0])
-            marker.type = Marker.CUBE
-            marker.action = Marker.ADD
-            
-            # Posição e orientação
-            marker.pose.position.x = float(tvecs[i][0][0])
-            marker.pose.position.y = float(tvecs[i][0][1])
-            marker.pose.position.z = float(tvecs[i][0][2])
-            marker.scale.x = self.marker_length
-            marker.scale.y = self.marker_length
-            marker.scale.z = 0.01  # Marcador fino
-            
-            # Cor (verde semi-transparente)
-            marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
-            marker.color.a = 0.5
-            
-            marker.lifetime.sec = 1  # Atualizar a cada segundo
-            
-            marker_array.markers.append(marker)
-        
-        self.markers_pub.publish(marker_array)
-
-    def publish_transforms(self, ids, rvecs, tvecs, header):
-        """Publicar transformadas TF dos marcadores (apenas quando detectados)"""
-        transforms = []
-        
-        for i in range(len(ids)):
-            t = TransformStamped()
-            t.header = header
-            t.header.frame_id = self.camera_frame
-            t.child_frame_id = f"{self.marker_frame_prefix}{ids[i][0]}"
-            
-            # Posição
-            t.transform.translation.x = float(tvecs[i][0][0])
-            t.transform.translation.y = float(tvecs[i][0][1])
-            t.transform.translation.z = float(tvecs[i][0][2])
-            
-            # Rotação (convertida para quaternion)
-            rot_mat = cv2.Rodrigues(rvecs[i])[0]
-            q = self.rotation_matrix_to_quaternion(rot_mat)
-            
-            t.transform.rotation.x = q[0]
-            t.transform.rotation.y = q[1]
-            t.transform.rotation.z = q[2]
-            t.transform.rotation.w = q[3]
-            
-            transforms.append(t)
-        
-        # Publicar todas as transformadas de uma vez
-        self.tf_broadcaster.sendTransform(transforms)
 
     def rotation_matrix_to_quaternion(self, rot_mat):
         """Converter matriz de rotação para quaternion"""
