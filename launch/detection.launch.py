@@ -1,18 +1,24 @@
 import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    # Nome do seu pacote
+    pkg_aruco_detector = get_package_share_directory('aruco_detector')
+
+    # <--- MUDANÇA 1: Definir o caminho para o arquivo de configuração YAML
+    aruco_config_filepath = os.path.join(pkg_aruco_detector, 'config', 'aruco_config.yaml')
+
     declared_arguments = [
         DeclareLaunchArgument(
             "use_rviz",
-            default_value="false",
-            description="Start RViz as a parameter with this initialization file.",
+            default_value="true", # Mudei para 'true' para facilitar os testes
+            description="Start RViz with a predefined configuration.",
         )
     ]
     use_rviz = LaunchConfiguration("use_rviz")
@@ -22,22 +28,20 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(
                 get_package_share_directory('usb_cam'),
-                'launch', 'camera.launch.py'  # Confirme o nome do arquivo!
+                'launch', 'camera.launch.py'
             )
         )
     )
 
-    # 2. Nó do aruco_detector
+    # <--- MUDANÇA 2: Modificar o nó do Aruco Detector
     aruco_node = Node(
         package='aruco_detector',
-        executable='aruco_detector.py',  # Verifique com `ros2 pkg executables aruco_detector`
+        # Usar o nome do executável definido no 'entry_points' do setup.py
+        executable='aruco_detector',
         name='aruco_detector',
         output='screen',
-        parameters=[{
-            'camera_topic': '/camera1/image_raw',  # Tópico corrigido!
-            'debug_mode': False,  # Opcional
-            # Adicione outros parâmetros específicos do seu nó aqui
-        }]
+        emulate_tty=True,
+        parameters=[aruco_config_filepath]
     )
 
     # 3. RViz
@@ -46,7 +50,7 @@ def generate_launch_description():
         executable="rviz2",
         name="rviz2",
         output="log",
-        arguments=["-d", os.path.join(get_package_share_directory('aruco_detector'), 'config', 'aruco.rviz')],
+        arguments=["-d", os.path.join(pkg_aruco_detector, 'config', 'aruco.rviz')],
         condition=IfCondition(use_rviz),
     )
 

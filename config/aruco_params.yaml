@@ -1,0 +1,33 @@
+# Arquivo de configuração para o nó aruco_detector
+aruco_detector:
+  ros__parameters:
+    # Tamanho do lado do marcador ArUco em metros.
+    marker_length: 0.05
+
+    # Dicionário ArUco a ser utilizado para a detecção.
+    dictionary: 'DICT_5X5_250'
+    
+    # ... outros parâmetros como camera_frame, thresholds, etc. ...
+    camera_frame: 'camera_link'
+    marker_frame_prefix: 'aruco_'
+
+    stability_filter:
+      position_threshold: 0.032 # m (3.2 cm)
+      angle_threshold: 0.15 # rad (8.6 graus)
+
+    # --- Parâmetros de Calibração da Câmera ---
+    camera_matrix: [1000.0, 0.0, 320.0,
+                    0.0, 1000.0, 240.0,
+                    0.0, 0.0, 1.0]
+
+    dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+    # --- Parâmetros de Tópicos ---
+    topics:
+      subscribers:
+        camera_image: "camera1/image_raw"
+
+      publishers:
+        detection_image: "aruco/detection"
+        poses: "aruco/poses"
+        markers: "aruco/markers"
