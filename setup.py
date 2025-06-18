@@ -17,6 +17,10 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
+    maintainer='Gabriel Torres',
+    maintainer_email='gabrieltlt721@gmail.com',
+    description='TODO: Package description',
+    license='TODO: License declaration',
     scripts=[
         os.path.join('aruco_detector', 'scripts', 'aruco_detector.py')
     ],
