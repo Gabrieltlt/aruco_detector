@@ -3,9 +3,9 @@
 <package format="3">
   <name>aruco_detector</name>
   <version>0.0.0</version>
-  <description>Detector de marcadores ArUco para ROS2 que subscreve em camera1/image_raw</description>
-  <maintainer email="seu@email.com">Seu Nome</maintainer>
-  <license>Apache License 2.0</license>
+  <description>TODO: Package description</description>
+  <maintainer email="gabrieltlt721@gmail.com">Gabriel Torres</maintainer>
+  <license>TODO: License declaration</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
@@ -22,6 +22,7 @@
   <!-- Dependências para launch files -->
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>usb_cam</exec_depend>
 
   <!-- Testes -->
   <test_depend>ament_copyright</test_depend>

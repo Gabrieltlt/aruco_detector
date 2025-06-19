@@ -1,0 +1,1 @@
+from .aruco_recognition import ArucoRecognition

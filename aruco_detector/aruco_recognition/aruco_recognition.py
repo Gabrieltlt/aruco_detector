@@ -7,60 +7,47 @@ from geometry_msgs.msg import PoseArray, Pose, TransformStamped
 from visualization_msgs.msg import MarkerArray, Marker
 from cv_bridge import CvBridge
 import cv2
-import cv2.aruco as aruco #type:ignore
+import cv2.aruco as aruco
 import numpy as np
 from tf2_ros import TransformBroadcaster
 
-class ArucoDetector(Node):
+class ArucoRecognition(Node):
     def __init__(self):
-        """
-        Construtor da classe ArucoDetector.
-        Inicializa o nó, declara e obtém parâmetros, e configura publishers/subscribers.
-        """
-        super().__init__('aruco_detector')
+        super().__init__('aruco_recognition')
 
-        # --- 1. Declaração dos Parâmetros (refletindo o novo YAML) ---
-        # Parâmetros de detecção
+        # --- 1. Declaração dos Parâmetros ---
         self.declare_parameter('marker_length', 0.05)
         self.declare_parameter('dictionary', 'DICT_5X5_250')
-
-        # Parâmetros de TF e Frames
         self.declare_parameter('camera_frame', 'camera_link')
         self.declare_parameter('marker_frame_prefix', 'aruco_')
-
-        # Filtro de estabilidade
         self.declare_parameter('stability_filter.position_threshold', 0.02)
         self.declare_parameter('stability_filter.angle_threshold', 0.15)
-        
-        # Parâmetros da câmera (agora no nível superior)
         self.declare_parameter('camera_matrix', [1000.0, 0.0, 320.0, 0.0, 1000.0, 240.0, 0.0, 0.0, 1.0])
         self.declare_parameter('dist_coeffs', [0.0, 0.0, 0.0, 0.0, 0.0])
-
-        # Parâmetros dos Tópicos
-        self.declare_parameter('topics.subscribers.camera_image', 'camera1/image_raw')
-        self.declare_parameter('topics.publishers.detection_image', 'aruco/detection')
-        self.declare_parameter('topics.publishers.poses', 'aruco/poses')
-        self.declare_parameter('topics.publishers.markers', 'aruco/markers')
+        self.declare_parameter('subscribers.image_rgb', 'camera1/image_raw')
+        self.declare_parameter('publishers.recognition_image', 'aruco/detection')
+        self.declare_parameter('publishers.poses', 'aruco/poses')
+        self.declare_parameter('publishers.markers', 'aruco/markers')
 
         # --- 2. Obtenção dos Parâmetros e Configuração ---
         self.load_parameters()
         self.setup_aruco()
         self.setup_tools_and_comms()
-        
-        self.get_logger().info("Aruco Detector (versão simplificada) inicializado com sucesso.")
+        self.get_logger().info("ArucoRecognition node inicializado com sucesso.")
 
     def load_parameters(self):
         """Carrega todos os parâmetros para atributos da classe."""
-        self.marker_length = self.get_parameter('marker_length').value
+        self.marker_length = float(self.get_parameter('marker_length').value)
         self.camera_frame = self.get_parameter('camera_frame').value
         self.marker_frame_prefix = self.get_parameter('marker_frame_prefix').value
-        
         self.pos_threshold = self.get_parameter('stability_filter.position_threshold').value
         self.ang_threshold = self.get_parameter('stability_filter.angle_threshold').value
-        
-        # MUDANÇA: Obter os parâmetros de câmera da nova localização
         self.camera_matrix = np.array(self.get_parameter('camera_matrix').value, dtype=np.float32).reshape(3, 3)
         self.dist_coeffs = np.array(self.get_parameter('dist_coeffs').value, dtype=np.float32)
+        self.topic_sub_camera = self.get_parameter('subscribers.image_rgb').value
+        self.topic_pub_detection = self.get_parameter('publishers.recognition_image').value
+        self.topic_pub_poses = self.get_parameter('publishers.poses').value
+        self.topic_pub_markers = self.get_parameter('publishers.markers').value
 
     def setup_aruco(self):
         """Configura o detector ArUco com base nos parâmetros."""
@@ -73,59 +60,45 @@ class ArucoDetector(Node):
             aruco_dict_id = cv2.aruco.DICT_5X5_250
 
         self.aruco_dict = aruco.getPredefinedDictionary(aruco_dict_id)
-        
-        # MUDANÇA: Parâmetros do detector agora são padrão, não mais do YAML.
-        self.aruco_parameters = aruco.DetectorParameters()
-        self.aruco_detector = aruco.ArucoDetector(self.aruco_dict, self.aruco_parameters)
+        if hasattr(aruco, 'DetectorParameters_create'):
+            self.aruco_parameters = aruco.DetectorParameters_create()
+            self.use_aruco_detector_class = False
+        else:
+            self.aruco_parameters = aruco.DetectorParameters()
+            self.use_aruco_detector_class = hasattr(aruco, 'ArucoDetector')
+        if self.use_aruco_detector_class:
+            self.aruco_recognition = aruco.ArucoDetector(self.aruco_dict, self.aruco_parameters)
+        else:
+            self.aruco_recognition = None
 
     def setup_tools_and_comms(self):
-        """Inicializa ferramentas e comunicadores ROS."""
         self.bridge = CvBridge()
         self.tf_broadcaster = TransformBroadcaster(self)
         self.last_valid_poses = {}
-
-        # MUDANÇA: A profundidade do QoS agora é um valor fixo.
         qos_depth = 10
-
-        topic_sub_camera = self.get_parameter('topics.subscribers.camera_image').value
-        topic_pub_detection = self.get_parameter('topics.publishers.detection_image').value
-        topic_pub_poses = self.get_parameter('topics.publishers.poses').value
-        topic_pub_markers = self.get_parameter('topics.publishers.markers').value
-
-        self.get_logger().info(f"Subscriber de imagem: '{topic_sub_camera}'")
-        self.image_sub = self.create_subscription(Image, topic_sub_camera, self.image_callback, qos_depth)
-        
-        self.get_logger().info(f"Publisher de imagem de debug: '{topic_pub_detection}'")
-        self.detection_pub = self.create_publisher(Image, topic_pub_detection, qos_depth)
-        
-        self.get_logger().info(f"Publisher de poses: '{topic_pub_poses}'")
-        self.poses_pub = self.create_publisher(PoseArray, topic_pub_poses, qos_depth)
-        
-        self.get_logger().info(f"Publisher de marcadores: '{topic_pub_markers}'")
-        self.markers_pub = self.create_publisher(MarkerArray, topic_pub_markers, qos_depth)
+        self.image_sub = self.create_subscription(Image, self.topic_sub_camera, self.image_callback, qos_depth)
+        self.detection_pub = self.create_publisher(Image, self.topic_pub_detection, qos_depth)
+        self.poses_pub = self.create_publisher(PoseArray, self.topic_pub_poses, qos_depth)
+        self.markers_pub = self.create_publisher(MarkerArray, self.topic_pub_markers, qos_depth)
 
     def image_callback(self, msg):
-        """Callback principal para processar frames de imagem."""
-        # MUDANÇA: O encoding da imagem agora é um valor fixo.
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
             self.get_logger().error(f'Erro ao converter imagem: {str(e)}')
             return
-            
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        corners, ids, rejected = self.aruco_detector.detectMarkers(gray)
-        
+        # Compatibilidade com diferentes versões do OpenCV
+        if self.aruco_recognition is not None:
+            corners, ids, rejected = self.aruco_recognition.detectMarkers(gray)
+        else:
+            corners, ids, rejected = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_parameters)
         if ids is not None:
             rvecs, tvecs, _ = aruco.estimatePoseSingleMarkers(corners, self.marker_length, self.camera_matrix, self.dist_coeffs)
-            
-            # MUDANÇA: Multiplicador do eixo agora é um valor fixo (0.5).
             axis_length = self.marker_length * 0.5
             for i in range(len(ids)):
                 cv2.drawFrameAxes(frame, self.camera_matrix, self.dist_coeffs, rvecs[i], tvecs[i], axis_length)
-            
             self.handle_detected_markers(ids, rvecs, tvecs, msg.header)
-        
         self.publish_detection_image(frame, msg.header)
 
     def handle_detected_markers(self, ids, rvecs, tvecs, header):
@@ -171,7 +144,6 @@ class ArucoDetector(Node):
         """Cria uma mensagem Marker com valores de visualização fixos."""
         marker = Marker()
         marker.header = header
-        # MUDANÇA: Parâmetros de visualização agora são fixos
         marker.ns = "aruco_markers"
         marker.id = marker_id
         marker.type = Marker.CUBE
@@ -179,9 +151,9 @@ class ArucoDetector(Node):
         marker.pose = self.create_pose_msg(marker_id)
         marker.scale.x = self.marker_length
         marker.scale.y = self.marker_length
-        marker.scale.z = self.marker_length * 0.1 # Espessura fixa
-        marker.color.r, marker.color.g, marker.color.b, marker.color.a = (0.0, 1.0, 0.0, 0.7) # Cor fixa
-        marker.lifetime = rclpy.duration.Duration(seconds=1.0).to_msg() # Tempo de vida fixo
+        marker.scale.z = self.marker_length * 0.1
+        marker.color.r, marker.color.g, marker.color.b, marker.color.a = (0.0, 1.0, 0.0, 0.7)
+        marker.lifetime = rclpy.duration.Duration(seconds=1.0).to_msg()
         return marker
 
     def publish_transforms(self, header):
@@ -201,7 +173,6 @@ class ArucoDetector(Node):
 
     def publish_detection_image(self, frame, header):
         try:
-            # MUDANÇA: Encoding da imagem de saída agora é fixo
             detection_msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
             detection_msg.header = header
             self.detection_pub.publish(detection_msg)
@@ -239,14 +210,17 @@ class ArucoDetector(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    detector = ArucoDetector()
+    detector = ArucoRecognition()
     try:
         rclpy.spin(detector)
     except KeyboardInterrupt:
-        pass
+        detector.get_logger().info('Nó encerrado manualmente pelo usuário (Ctrl+C).')
     finally:
         detector.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()

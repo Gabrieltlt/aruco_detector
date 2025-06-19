@@ -1,5 +1,5 @@
 # Arquivo de configuração para o nó aruco_detector
-aruco_detector:
+aruco_recognition:
   ros__parameters:
     # Tamanho do lado do marcador ArUco em metros.
     marker_length: 0.05
@@ -23,11 +23,10 @@ aruco_detector:
     dist_coeffs: [0.0, 0.0, 0.0, 0.0, 0.0]
 
     # --- Parâmetros de Tópicos ---
-    topics:
-      subscribers:
-        camera_image: "camera1/image_raw"
+    subscribers:
+        image_rgb: "camera1/image_raw"
 
-      publishers:
-        detection_image: "aruco/detection"
+    publishers:
+        recognition_image: "aruco/recognition"
         poses: "aruco/poses"
         markers: "aruco/markers"
